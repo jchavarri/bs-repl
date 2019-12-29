@@ -15,7 +15,8 @@ type state = {
 
 type action =
   | InputChanged(string)
-  | KeyPressed(Events.Keyboard.key);
+  | KeyPressed(Events.Keyboard.key)
+  | CodeEntered(string, Bs.result);
 
 let removeTopExtraOutput = jsCode => {
   jsCode
@@ -57,34 +58,18 @@ let reducer = (state, action) => {
             },
         }
       };
-    | Enter =>
-      switch (state.source, state.currentInput->Js.String2.trim) {
-      | (Textarea, input) when input === "" => state
-      | (Textarea, input)
-      | (History(input), _) =>
-        let (head, tail) = state.history;
-        let history = List.concat(tail->List.reverse, head);
-        let result =
-          switch (Bs.reason(input)) {
-          | Ok({code, warnings}) =>
-            let code =
-              code
-              ->removeTopExtraOutput
-              ->removeBottomExtraOutput
-              ->Js.String2.trim
-              ->Js.String2.replaceByRe([%re {|/\n+/g|}], "\n");
-            Ok({Bs.code, warnings});
-          | Error(_) as r => r
-          };
-        {
-          currentInput: "",
-          history: ([input, ...history], []),
-          source: Textarea,
-          executed: [{input, result}, ...state.executed],
-        };
-      }
+
     | _ => state
     }
+  | CodeEntered(input, result) =>
+    let (head, tail) = state.history;
+    let history = List.concat(tail->List.reverse, head);
+    {
+      currentInput: "",
+      history: ([input, ...history], []),
+      source: Textarea,
+      executed: [{input, result}, ...state.executed],
+    };
   };
 };
 
@@ -92,12 +77,19 @@ let s = React.string;
 
 [@react.component]
 let make = () => {
+  let containerRef = React.useRef(Js.Nullable.null);
   let (state, dispatch) =
     React.useReducer(
       reducer,
       {currentInput: "", history: ([], []), source: Textarea, executed: []},
     );
   <>
+    <iframe
+      id="container"
+      src="/container.html"
+      ref={ReactDOMRe.Ref.domRef(containerRef)}
+      sandbox="allow-modals allow-scripts allow-popups allow-forms allow-same-origin"
+    />
     <div id="toplevel-container">
       <pre id="output">
         <div>
@@ -128,7 +120,36 @@ let make = () => {
                 ->ReactEvent.Keyboard.key
                 ->Events.Keyboard.keyFromEventKey;
               switch (key) {
-              | Enter
+              | Enter =>
+                event->ReactEvent.Synthetic.preventDefault;
+                switch (state.source, state.currentInput->Js.String2.trim) {
+                | (Textarea, input) when input === "" => ()
+                | (Textarea, input)
+                | (History(input), _) =>
+                  let result =
+                    switch (Bs.reason(input)) {
+                    | Ok({code, warnings}) =>
+                      let code =
+                        code
+                        ->removeTopExtraOutput
+                        ->removeBottomExtraOutput
+                        ->Js.String2.trim
+                        ->Js.String2.replaceByRe([%re {|/\n+/g|}], "\n");
+                      switch (
+                        containerRef->React.Ref.current->Js.Nullable.toOption
+                      ) {
+                      | Some(containerRef) =>
+                        ContainerComm.toFrame(
+                          containerRef,
+                          CommFileUpdate(Container.indexFileName, code),
+                        )
+                      | None => ()
+                      };
+                      Ok({Bs.code, warnings});
+                    | Error(_) as r => r
+                    };
+                  dispatch @@ CodeEntered(input, result);
+                };
               | ArrowUp
               | ArrowDown =>
                 event->ReactEvent.Synthetic.preventDefault;
