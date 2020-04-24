@@ -12,6 +12,9 @@ module.exports = {
     path: outputDir,
     filename: "Index.js"
   },
+  node: {
+    fs: 'empty'
+  },
   plugins: [
     new HtmlWebpackPlugin({
       template: "src/index.html",
